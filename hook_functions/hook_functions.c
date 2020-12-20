@@ -1,4 +1,4 @@
-#define pr_fmt(fmt) "hook: " fmt
+#define pr_fmt(fmt) "hook_functions: " fmt
 
 #include <linux/init.h>
 #include <linux/ftrace.h>
@@ -166,50 +166,29 @@ void remove_hooks(struct ftrace_hook *hooks, size_t count)
 #define PTREGS_SYSCALL_STUBS 1
 #endif
 
-/*
- * Tail call optimization can interfere with recursion detection based on
- * return address on the stack. Disable it to avoid machine hangups.
- */
 #if !USE_FENTRY_OFFSET
 #pragma GCC optimize("-fno-optimize-sibling-calls")
 #endif
 
-#ifdef PTREGS_SYSCALL_STUBS
-static asmlinkage long (*real_sys_clone)(struct pt_regs *regs);
-
-static asmlinkage long fh_sys_clone(struct pt_regs *regs)
-{
-	long ret;
-
-	pr_info("clone() before\n");
-
-	ret = real_sys_clone(regs);
-
-	pr_info("clone() after: %ld\n", ret);
-
-	return ret;
-}
-#else
-static asmlinkage long (*real_sys_clone)(unsigned long clone_flags,
+static asmlinkage long (*orig_sys_clone)(unsigned long clone_flags,
 		unsigned long newsp, int __user *parent_tidptr,
 		int __user *child_tidptr, unsigned long tls);
 
-static asmlinkage long fh_sys_clone(unsigned long clone_flags,
+static asmlinkage long hook_sys_clone(unsigned long clone_flags,
 		unsigned long newsp, int __user *parent_tidptr,
 		int __user *child_tidptr, unsigned long tls)
 {
 	long ret;
 
-	pr_info("clone() before\n");
+	//pr_info("clone() before\n");
 
-	ret = real_sys_clone(clone_flags, newsp, parent_tidptr,
+	ret = orig_sys_clone(clone_flags, newsp, parent_tidptr,
 		child_tidptr, tls);
 
-	pr_info("clone() after: %ld\n", ret);
+	pr_info("clone(): %ld\n", ret);
 
 	return ret;
 }
-#endif
 
 static char *duplicate_filename(const char __user *filename)
 {
@@ -227,38 +206,18 @@ static char *duplicate_filename(const char __user *filename)
 	return kernel_filename;
 }
 
-#ifdef PTREGS_SYSCALL_STUBS
-static asmlinkage long (*real_sys_execve)(struct pt_regs *regs);
 
-static asmlinkage long fh_sys_execve(struct pt_regs *regs)
-{
-	long ret;
-	char *kernel_filename;
-
-	kernel_filename = duplicate_filename((void*) regs->di);
-
-	pr_info("execve() before: %s\n", kernel_filename);
-
-	kfree(kernel_filename);
-
-	ret = real_sys_execve(regs);
-
-	pr_info("execve() after: %ld\n", ret);
-
-	return ret;
-}
-#else
 /* Указатель на оригинальный обработчки системного вызова execve
 Можно вызывать из обертки
 */
-static asmlinkage long (*real_sys_execve)(const char __user *filename,
+static asmlinkage long (*orig_sys_execve)(const char __user *filename,
 		const char __user *const __user *argv,
 		const char __user *const __user *envp);
 
 /* Функция, которая будет вызываться вместо перехваченной
  Возвращаемое значение будет передано вызывающей функции
 */
-static asmlinkage long fh_sys_execve(const char __user *filename,
+static asmlinkage long hook_sys_execve(const char __user *filename,
 		const char __user *const __user *argv,
 		const char __user *const __user *envp)
 {
@@ -267,51 +226,110 @@ static asmlinkage long fh_sys_execve(const char __user *filename,
 
 	kernel_filename = duplicate_filename(filename);
 
-	pr_info("execve() before: %s\n", kernel_filename);
+	//pr_info("execve() before: %s\n", kernel_filename);
 
 	kfree(kernel_filename);
 
-	ret = real_sys_execve(filename, argv, envp);
+	ret = orig_sys_execve(filename, argv, envp);
 
-	pr_info("execve() after: %ld\n", ret);
+	pr_info("execve(): %ld\n", ret);
 
 	return ret;
 }
-#endif
 
-static asmlinkage int (*real_bdev_read_page)(struct block_device *bdev, sector_t sector, 
+static asmlinkage int (*orig_bdev_read_page)(struct block_device *bdev, sector_t sector, 
 struct page *page);
 
-static asmlinkage int fh_bdev_read_page(struct block_device *bdev, sector_t sector, 
+static asmlinkage int hook_bdev_read_page(struct block_device *bdev, sector_t sector, 
 	struct page *page)
 {
     int res;
 
-    res = real_bdev_read_page(bdev, sector, page);
-    pr_info("read page from /dev/sda");
+    res = orig_bdev_read_page(bdev, sector, page);
+    pr_info("read page: from /dev/sda");
 
     return res;
 }
 
-static asmlinkage int (*real_bdev_write_page)(struct block_device *bdev, sector_t sector, 
+static asmlinkage int (*orig_bdev_write_page)(struct block_device *bdev, sector_t sector, 
 struct page *page, struct writeback_control **wc);
 
 
-static asmlinkage int fh_bdev_write_page(struct block_device *bdev, sector_t sector, 
+static asmlinkage int hook_bdev_write_page(struct block_device *bdev, sector_t sector, 
 struct page *page, struct writeback_control **wc)
 {
     int res;
 
-    res = real_bdev_write_page(bdev, sector, page, wc);
-    pr_info("write page to /dev/sda");
+    res = orig_bdev_write_page(bdev, sector, page, wc);
+    pr_info("write page: to /dev/sda");
 
     return res;
 }
 
-/*
- * x86_64 kernels have a special naming convention for syscall entry points in newer kernels.
- * That's what you end up with if an architecture has 3 (three) ABIs for system calls.
- */
+static asmlinkage ssize_t (*orig_random_read)(struct file *file, char __user *buf, size_t nbytes, loff_t *ppos);
+
+static asmlinkage ssize_t hook_random_read(struct file *file, char __user *buf, size_t nbytes, loff_t *ppos)
+{
+    int bytes_read, i;
+    long error;
+    char *kbuf = NULL;
+
+    bytes_read = orig_random_read(file, buf, nbytes, ppos);
+    printk(KERN_DEBUG "random_read: read from to /dev/random: %d bytes\n", bytes_read);
+
+    kbuf = kzalloc(bytes_read, GFP_KERNEL);
+    error = copy_from_user(kbuf, buf, bytes_read);
+
+    if(error)
+    {
+         printk(KERN_DEBUG "random_read: %ld bytes could not be copied into kbuf\n", error);
+        kfree(kbuf);
+        return bytes_read;
+    }
+
+    for ( i = 0 ; i < bytes_read ; i++ )
+        kbuf[i] = 0x00;
+
+    error = copy_to_user(buf, kbuf, bytes_read);
+    if (error)
+         printk(KERN_DEBUG "random_read: %ld bytes could not be copied into buf\n", error);
+
+    kfree(kbuf);
+    return bytes_read;
+}
+
+static asmlinkage ssize_t (*orig_urandom_read)(struct file *file, char __user *buf, size_t nbytes, loff_t *ppos);
+
+static asmlinkage ssize_t hook_urandom_read(struct file *file, char __user *buf, size_t nbytes, loff_t *ppos)
+{
+    int bytes_read, i;
+    long error;
+    char *kbuf = NULL;
+
+    bytes_read = orig_urandom_read(file, buf, nbytes, ppos);
+     printk(KERN_DEBUG "urandom_read: read from /dev/urandom %d bytes", bytes_read);
+
+    kbuf = kzalloc(bytes_read, GFP_KERNEL);
+    error = copy_from_user(kbuf, buf, bytes_read);
+
+    if(error)
+    {
+         printk(KERN_DEBUG "urandom_read: %ld bytes could not be copied into kbuf\n", error);
+        kfree(kbuf);
+        return bytes_read;
+    }
+
+    for ( i = 0 ; i < bytes_read ; i++ )
+        kbuf[i] = 0x00;
+
+    error = copy_to_user(buf, kbuf, bytes_read);
+    if (error)
+         printk(KERN_DEBUG "urandom_read: %ld bytes could not be copied into buf\n", error);
+
+    kfree(kbuf);
+    return bytes_read;
+}
+
 #ifdef PTREGS_SYSCALL_STUBS
 #define SYSCALL_NAME(name) ("__x64_" name)
 #else
@@ -327,10 +345,12 @@ struct page *page, struct writeback_control **wc)
 
 /* массив перехватываемых функций */
 static struct ftrace_hook demo_hooks[] = {
-    HOOK("__x64_sys_clone",  fh_sys_clone,  &real_sys_clone),
-    HOOK("__x64_sys_execve", fh_sys_execve, &real_sys_execve),
-    HOOK("bdev_read_page", fh_bdev_read_page, &real_bdev_read_page),
-    HOOK("bdev_write_page", fh_bdev_write_page, &real_bdev_write_page),
+    HOOK("__x64_sys_clone",  hook_sys_clone,  &orig_sys_clone),
+    HOOK("__x64_sys_execve", hook_sys_execve, &orig_sys_execve),
+    HOOK("bdev_read_page", hook_bdev_read_page, &orig_bdev_read_page),
+    HOOK("bdev_write_page", hook_bdev_write_page, &orig_bdev_write_page),
+    HOOK("random_read", hook_random_read, &orig_random_read),
+    HOOK("urandom_read", hook_urandom_read, &orig_urandom_read),
 };
 
 
