@@ -115,15 +115,6 @@ void remove_hook(struct ftrace_hook *hook)
 	}
 }
 
-/**
- * install_hooks() - register and enable multiple hooks
- * @hooks: array of hooks to install
- * @count: number of hooks to install
- *
- * If some hooks fail to install then all hooks will be removed.
- *
- * Returns: zero on success, negative error code otherwise.
- */
 int install_hooks(struct ftrace_hook *hooks, size_t count)
 {
 	int err;
@@ -145,11 +136,6 @@ error:
 	return err;
 }
 
-/**
- * remove_hooks() - disable and unregister multiple hooks
- * @hooks: array of hooks to remove
- * @count: number of hooks to remove
- */
 void remove_hooks(struct ftrace_hook *hooks, size_t count)
 {
 	size_t i;
